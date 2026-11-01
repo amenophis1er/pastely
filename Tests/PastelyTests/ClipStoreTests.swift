@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import SQLite3
 import Testing
 @testable import Pastely
 
@@ -48,6 +49,47 @@ struct ClipStoreTests {
         try insert(store, "/tmp/example", kind: .file)
         #expect(store.items.count == 2)
         #expect(Set(store.items.map(\.kind)) == [.text, .file])
+    }
+
+    @Test func labelPinsAndSearches() throws {
+        let store = try ClipStore(path: ":memory:")
+        try insert(store, "eyJhbGciOiJIUzI1NiJ9.token")
+        try store.setLabel("  staging token ", for: store.items[0], pin: true)
+        #expect(store.items[0].label == "staging token")
+        #expect(store.items[0].pinned)
+        #expect(store.search("staging").map(\.label) == ["staging token"])
+        #expect(store.items[0].menuTitle == "staging token")
+    }
+
+    @Test func labelIsEncryptedOnDisk() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("label-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try ClipStore(path: path)
+        try insert(store, "x")
+        try store.setLabel("\nsuper secret name\n", for: store.items[0], pin: true)
+        #expect(store.items[0].label == "super secret name")
+        var db: OpaquePointer?
+        #expect(sqlite3_open(path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        #expect(sqlite3_prepare_v2(db, "SELECT label FROM items", -1, &stmt, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        #expect(sqlite3_step(stmt) == SQLITE_ROW)
+        let raw = Data(bytes: sqlite3_column_blob(stmt, 0), count: Int(sqlite3_column_bytes(stmt, 0)))
+        #expect(!raw.isEmpty)
+        #expect(raw.range(of: Data("secret".utf8)) == nil)
+    }
+
+    @Test func emptyLabelClearsAndUnpinKeepsLabel() throws {
+        let store = try ClipStore(path: ":memory:")
+        try insert(store, "x")
+        try store.setLabel("name", for: store.items[0], pin: true)
+        store.togglePin(store.items[0])
+        #expect(!store.items[0].pinned)
+        #expect(store.items[0].label == "name")
+        try store.setLabel("", for: store.items[0])
+        #expect(store.items[0].label == nil)
+        #expect(!store.items[0].pinned)
     }
 
     @Test func countCapKeepsPinned() throws {

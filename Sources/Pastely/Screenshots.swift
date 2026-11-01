@@ -115,7 +115,7 @@ enum DemoData {
         let store = try! ClipStore(path: ":memory:")
         let now = Date()
         func add(_ text: String, kind: ClipKind = .text, app: String, minutesAgo: Double, payload: Data? = nil,
-                 thumb: Data? = nil, ocr: String? = nil, pinned: Bool = false) {
+                 thumb: Data? = nil, ocr: String? = nil, pinned: Bool = false, label: String? = nil) {
             let payload = payload ?? Data(text.utf8)
             let item = ClipItem(id: 0, createdAt: now.addingTimeInterval(-minutesAgo * 60), kind: kind,
                                 uti: "public.utf8-plain-text", preview: String(text.prefix(200)), thumb: thumb, ocrText: ocr,
@@ -123,14 +123,14 @@ enum DemoData {
                                 sourceApp: app, pinned: false)
             guard let (id, _) = try? store.insert(item, payload: payload) else { return }
             if let ocr { try? store.setOCRText(ocr, for: id) }
-            if pinned, let row = store.items.first(where: { $0.id == id }) { store.togglePin(row) }
+            if pinned, let row = store.items.first(where: { $0.id == id }) { try? store.setLabel(label, for: row, pin: true) }
         }
         let invoice = invoiceImage(size: 720)
         add("Image 1280×800", kind: .image, app: "com.apple.Safari", minutesAgo: 2, payload: invoice,
             thumb: invoiceImage(size: 144), ocr: "INVOICE #4521\nAcme Studio\nDue Friday, Oct 24\nTotal: $1,250.00")
         add("Let's ship the clipboard manager this week and write the landing page after.", app: "com.apple.MobileSMS", minutesAgo: 6)
         add("func debounce<T>(_ delay: Duration, _ work: @escaping (T) -> Void) -> (T) -> Void {\n    var task: Task<Void, Never>?\n    return { value in\n        task?.cancel()\n        task = Task { try? await Task.sleep(for: delay); work(value) }\n    }\n}", app: "com.apple.dt.Xcode", minutesAgo: 14)
-        add("https://github.com/amenophis1er/pastely", app: "com.google.Chrome", minutesAgo: 31, pinned: true)
+        add("https://github.com/amenophis1er/pastely", app: "com.google.Chrome", minutesAgo: 31, pinned: true, label: "Pastely repo")
         add("/Users/you/Documents/Q4 Roadmap.pdf\n/Users/you/Documents/Budget 2026.numbers", kind: .file, app: "com.apple.finder", minutesAgo: 48)
         add("Meeting moved to 3:30. Same room.", app: "com.tinyspeck.slackmacgap", minutesAgo: 70)
         add("brew install --cask pastely", app: "com.googlecode.iterm2", minutesAgo: 125)

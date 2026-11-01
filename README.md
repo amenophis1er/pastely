@@ -11,7 +11,7 @@ Website: [pastely.amenophis.dev](https://pastely.amenophis.dev) · Download: [la
 - Press **⇧⌘V** in any app. The panel opens next to your cursor. Type to search, Return to paste.
 - Keeps text, rich text, images and file references.
 - Reads the text inside screenshots on-device, so a search for "invoice" finds the picture. Shift+Return pastes the recognized text.
-- Filters for text, images, files and pinned items. Pins survive cleanup.
+- Filters for text, images, files and pinned items. Pins survive cleanup and can carry a label, so "staging token" is searchable and readable in the list.
 - Updates itself through Sparkle from GitHub Releases.
 
 ![Searching for a word found inside a screenshot](https://pastely.amenophis.dev/assets/search-dark.png)
@@ -43,6 +43,7 @@ On first launch a welcome screen walks you through the shortcut, the Accessibili
 | ⌘1 … ⌘9 | Paste the nth visible item |
 | ⌘C | Copy without pasting |
 | ⌘P | Pin or unpin |
+| ⇧⌘P | Pin with a label, or edit the label |
 | ⌘⌫ | Delete |
 | ⇥ | Cycle filters |
 | ⎋ | Close |

@@ -4,6 +4,8 @@ Each version has a section. The release workflow reads the section matching the 
 
 ## Unreleased
 
+- Items can carry a label. ⇧⌘P, or "Pin with label…" in a row's menu, names the item and pins it; the label replaces the preview in the list and the menu bar, and search matches it. Clear the text to remove a label. Unpinning keeps it. Labels are encrypted like everything else.
+
 ## 0.1.2
 
 Images paste into terminals the way Claude Code and Codex expect.
