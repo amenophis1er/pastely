@@ -45,6 +45,7 @@ final class ClipStore {
         """)
         if !hasColumn("thumb") { exec("ALTER TABLE items ADD COLUMN thumb BLOB") }
         if !hasColumn("ocr_text") { exec("ALTER TABLE items ADD COLUMN ocr_text BLOB") }
+        if !hasColumn("label") { exec("ALTER TABLE items ADD COLUMN label BLOB") }
         reload()
     }
 
@@ -105,6 +106,19 @@ final class ClipStore {
         self.maxItems = maxItems
         self.maxAgeDays = maxAgeDays
         prune()
+        reload()
+    }
+
+    /// Names the item, and pins it when `pin` is set. An empty label clears the name.
+    /// Labels are user-written and can describe a secret, so they are encrypted like previews.
+    func setLabel(_ label: String?, for item: ClipItem, pin: Bool = false) throws {
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sealed = trimmed.isEmpty ? nil : try Crypto.seal(Data(trimmed.utf8))
+        try run("UPDATE items SET label = ?, pinned = MAX(pinned, ?) WHERE id = ?") { stmt in
+            if let sealed { bind(stmt, 1, sealed) } else { sqlite3_bind_null(stmt, 1) }
+            sqlite3_bind_int(stmt, 2, pin ? 1 : 0)
+            sqlite3_bind_int64(stmt, 3, item.id)
+        }
         reload()
     }
 
@@ -173,7 +187,7 @@ final class ClipStore {
 
     private func reload() {
         var result: [ClipItem] = []
-        let sql = "SELECT id, created_at, kind, uti, preview, thumb, byte_size, content_hash, source_app, pinned, ocr_text FROM items ORDER BY pinned DESC, created_at DESC"
+        let sql = "SELECT id, created_at, kind, uti, preview, thumb, byte_size, content_hash, source_app, pinned, ocr_text, label FROM items ORDER BY pinned DESC, created_at DESC"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
@@ -182,6 +196,8 @@ final class ClipStore {
             let thumb = sqlite3_column_type(stmt, 5) == SQLITE_NULL ? nil : Crypto.open(column(stmt, 5))
             let ocr = sqlite3_column_type(stmt, 10) == SQLITE_NULL ? nil
                 : Crypto.open(column(stmt, 10)).flatMap { String(data: $0, encoding: .utf8) }
+            let label = sqlite3_column_type(stmt, 11) == SQLITE_NULL ? nil
+                : Crypto.open(column(stmt, 11)).flatMap { String(data: $0, encoding: .utf8) }
             result.append(ClipItem(
                 id: sqlite3_column_int64(stmt, 0),
                 createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
@@ -193,7 +209,8 @@ final class ClipStore {
                 byteSize: Int(sqlite3_column_int64(stmt, 6)),
                 contentHash: String(cString: sqlite3_column_text(stmt, 7)),
                 sourceApp: sqlite3_column_text(stmt, 8).map { String(cString: $0) },
-                pinned: sqlite3_column_int(stmt, 9) != 0
+                pinned: sqlite3_column_int(stmt, 9) != 0,
+                label: label
             ))
         }
         items = result

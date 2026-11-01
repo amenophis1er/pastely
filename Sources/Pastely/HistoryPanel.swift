@@ -50,6 +50,7 @@ final class HistoryPanel {
     func select(_ id: Int64) {
         model.query = ""
         model.filter = .all
+        model.labelTarget = nil
         model.selection = id
         model.scrollTarget = id
     }
@@ -142,9 +143,32 @@ final class HistoryViewModel {
     /// never by a mouse click: scrolling under the cursor breaks double-click.
     var scrollTarget: Int64?
 
+    /// The item whose label is being edited; the header swaps search for a label field.
+    var labelTarget: ClipItem?
+    var labelDraft = ""
+
     @ObservationIgnored private var lastClick: (id: Int64, at: Date)?
 
     init(store: ClipStore) { self.store = store }
+
+    /// Opens the label editor for an item, or the selection. Saving also pins it.
+    func editLabel(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        selection = item.id
+        labelDraft = item.label ?? ""
+        labelTarget = item
+    }
+
+    func saveLabel() {
+        guard let item = labelTarget else { return }
+        labelTarget = nil
+        // The row can be pruned or deleted while the editor is open; then there is nothing to name.
+        guard store.items.contains(where: { $0.id == item.id }) else { reselect(); return }
+        try? store.setLabel(labelDraft, for: item, pin: true)
+        invalidate()
+    }
+
+    func cancelLabel() { labelTarget = nil }
 
     /// Single click selects; a second click on the same row within the system
     /// double-click interval pastes. Tracked here so it does not depend on NSEvent.
@@ -186,6 +210,7 @@ final class HistoryViewModel {
     func reset() {
         query = ""
         filter = .all
+        labelTarget = nil
         selection = store.items.first?.id
         canPaste = Paster.isTrusted()
     }
@@ -257,6 +282,7 @@ final class HistoryViewModel {
 struct HistoryView: View {
     @Bindable var model: HistoryViewModel
     @FocusState private var searchFocused: Bool
+    @FocusState private var labelFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -287,28 +313,46 @@ struct HistoryView: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.accent.opacity(0.25), lineWidth: 1))
         .tint(Theme.accent)
         .onAppear { searchFocused = true }
+        // Focus moves after the field exists: setting it in the same pass as the swap is dropped.
+        .onChange(of: model.labelTarget?.id) { _, id in
+            DispatchQueue.main.async { if id != nil { labelFocused = true } else { searchFocused = true } }
+        }
     }
 
     private var header: some View {
         VStack(spacing: Theme.Space.sm) {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search clipboard history", text: $model.query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15))
-                    .focused($searchFocused)
-                    .onSubmit { model.choose() }
-                    .onKeyPress(.upArrow) { model.move(-1); return .handled }
-                    .onKeyPress(.downArrow) { model.move(1); return .handled }
-                    .onKeyPress(.escape) { AppDelegate.shared.panel.hide(); return .handled }
-                    .onKeyPress(.tab) { model.cycleFilter(1); return .handled }
-                    .onKeyPress(phases: .down) { press in handle(press) }
-                    .onChange(of: model.query) { _, _ in model.selection = model.results.first?.id; model.scrollTarget = model.selection }
-                if !model.query.isEmpty {
-                    Button { model.query = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+            if let target = model.labelTarget {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "pin.fill").foregroundStyle(Theme.accent)
+                    TextField(target.pinned ? "Label for this pin" : "Label and pin", text: $model.labelDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 15))
+                        .focused($labelFocused)
+                        .onSubmit { model.saveLabel() }
+                        .onKeyPress(.escape) { model.cancelLabel(); return .handled }
+                        .onKeyPress(.tab) { .handled } // keep focus in the field; the footer says ↩ / ⎋
+                }
+            } else {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search clipboard history", text: $model.query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 15))
+                        .focused($searchFocused)
+                        .onSubmit { model.choose() }
+                        .onKeyPress(.upArrow) { model.move(-1); return .handled }
+                        .onKeyPress(.downArrow) { model.move(1); return .handled }
+                        .onKeyPress(.escape) { AppDelegate.shared.panel.hide(); return .handled }
+                        .onKeyPress(.tab) { model.cycleFilter(1); return .handled }
+                        .onKeyPress(phases: .down) { press in handle(press) }
+                        .onChange(of: model.query) { _, _ in model.selection = model.results.first?.id; model.scrollTarget = model.selection }
+                        .onAppear { searchFocused = true } // the field is rebuilt after the label editor closes
+                    if !model.query.isEmpty {
+                        Button { model.query = "" } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             HStack(spacing: Theme.Space.xs + 2) {
@@ -336,9 +380,12 @@ struct HistoryView: View {
             return .handled
         }
         guard press.modifiers.contains(.command) else { return .ignored }
-        switch press.key {
-        case "p": model.togglePin(); return .handled
-        case .delete, "\u{7f}": model.deleteSelected(); return .handled
+        // With ⇧ held the key arrives uppercase; compare letters case-insensitively.
+        switch String(press.key.character).lowercased() {
+        case "p":
+            if press.modifiers.contains(.shift) { model.editLabel() } else { model.togglePin() }
+            return .handled
+        case String(KeyEquivalent.delete.character), "\u{7f}": model.deleteSelected(); return .handled
         case "c":
             if let item = model.selectedItem { model.copy(item) }
             return .handled
@@ -366,7 +413,7 @@ struct HistoryView: View {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             let selected = model.selection == item.id
-                            HistoryRow(item: item, index: index + 1, isSelected: selected)
+                            HistoryRow(item: item, index: model.labelTarget == nil ? index + 1 : 0, isSelected: selected)
                                 .background(
                                     RoundedRectangle(cornerRadius: Theme.Radius.md)
                                         .fill(selected ? Theme.accent.opacity(0.18) : Color.clear)
@@ -397,6 +444,7 @@ struct HistoryView: View {
                                     }
                                     Divider()
                                     Button(item.pinned ? "Unpin" : "Pin") { model.store.togglePin(item); model.invalidate() }
+                                    Button(item.label == nil ? (item.pinned ? "Add label…" : "Pin with label…") : "Edit label…") { model.editLabel(item) }
                                     Button("Delete", role: .destructive) { model.store.delete(item); model.invalidate() }
                                 }
                         }
@@ -456,13 +504,23 @@ struct HistoryView: View {
 
     private var hints: some View {
         HStack(spacing: Theme.Space.lg) {
-            KeyHint(keys: "↩", label: "Paste")
-            KeyHint(keys: "⇧↩", label: model.selectedItem?.kind == .image ? "Paste text" : "Plain text")
-            if model.selectedItem?.kind == .image { KeyHint(keys: "⌃↩", label: "Paste as ⌃V") }
-            KeyHint(keys: "⌘C", label: "Copy")
-            KeyHint(keys: "⌘P", label: "Pin")
-            KeyHint(keys: "⌘⌫", label: "Delete")
-            KeyHint(keys: "⇥", label: "Filter")
+            if model.labelTarget != nil {
+                KeyHint(keys: "↩", label: model.labelTarget?.pinned == true ? "Save" : "Save and pin")
+                KeyHint(keys: "⎋", label: "Cancel")
+            } else {
+                KeyHint(keys: "↩", label: "Paste")
+                KeyHint(keys: "⇧↩", label: model.selectedItem?.kind == .image ? "Paste text" : "Plain text")
+                if model.selectedItem?.kind == .image { KeyHint(keys: "⌃↩", label: "Paste as ⌃V") }
+                KeyHint(keys: "⌘C", label: "Copy")
+                // One slot: pinning first, then naming the pin. Nine hints overflow 760 pt on an image row.
+                if model.selectedItem?.pinned == true {
+                    KeyHint(keys: "⇧⌘P", label: "Label")
+                } else {
+                    KeyHint(keys: "⌘P", label: "Pin")
+                }
+                KeyHint(keys: "⌘⌫", label: "Delete")
+                KeyHint(keys: "⇥", label: "Filter")
+            }
             Spacer()
             Text("\(model.results.count) of \(model.store.items.count)")
                 .font(Theme.Text.caption).foregroundStyle(.tertiary)
@@ -490,7 +548,11 @@ struct HistoryRow: View {
                 KindBadge(kind: item.kind, size: 36)
             }
             VStack(alignment: .leading, spacing: 3) {
-                if item.kind == .image, let ocr = item.ocrText?.split(whereSeparator: \.isNewline).first {
+                if let label = item.label {
+                    Text(label).font(Theme.Text.row).fontWeight(.medium).lineLimit(1)
+                    Text(item.kind == .image ? item.menuTitleWithoutLabel : item.preview.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(Theme.Text.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                } else if item.kind == .image, let ocr = item.ocrText?.split(whereSeparator: \.isNewline).first {
                     Text(item.preview).font(Theme.Text.row).lineLimit(1)
                     Text(String(ocr)).font(Theme.Text.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                 } else {
@@ -513,7 +575,7 @@ struct HistoryRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if index <= 9 {
+            if (1...9).contains(index) {
                 Text("⌘\(index)")
                     .font(Theme.Text.hint)
                     .foregroundStyle(.tertiary)

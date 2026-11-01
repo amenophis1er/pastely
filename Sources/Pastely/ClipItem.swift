@@ -20,8 +20,15 @@ struct ClipItem: Identifiable, Hashable, Sendable {
     var contentHash: String
     var sourceApp: String?
     var pinned: Bool
+    /// A name the user gave the item, usually when pinning. Shown in place of the preview.
+    var label: String?
 
     var menuTitle: String {
+        label ?? menuTitleWithoutLabel
+    }
+
+    /// The content-derived title, used under a label so the row still says what the item is.
+    var menuTitleWithoutLabel: String {
         switch kind {
         case .image:
             // Recognized text tells screenshots apart; size alone does not.
@@ -65,8 +72,10 @@ struct ClipItem: Identifiable, Hashable, Sendable {
 
     /// What search matches against.
     var searchText: String {
-        if let ocrText { return preview + "\n" + ocrText }
-        return preview
+        var text = preview
+        if let label { text = label + "\n" + text }
+        if let ocrText { text += "\n" + ocrText }
+        return text
     }
 
     /// Plain text for a payload of this item's kind.
